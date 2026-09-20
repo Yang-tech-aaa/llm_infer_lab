@@ -1,0 +1,20 @@
+ === A 左值初始化：期望 copy-ctor ===
+ctor     id=1 this=0x7ffe05bbd470 size=3 buf=0x6541f72002c0
+copy-ctor id=2 this=0x7ffe05bbd490 size=3 buf=0x6541f72002e0
+ === B std::move: 期望 move-ctor 且该行过后a.buf变为nullptr ===
+move-ctor id=3 this=0x7ffe05bbd4b0 size=3 buf=0x6541f72002c0
+ === C const陷阱：期望 copy-ctor ===
+ctor     id=4 this=0x7ffe05bbd4d0 size=3 buf=0x6541f7200300
+copy-ctor id=5 this=0x7ffe05bbd4f0 size=3 buf=0x6541f7200320
+ === D prvalue返回：期望 看不到ctor调用 ===
+ctor     id=6 this=0x7ffe05bbd510 size=3 buf=0x6541f7200340
+ === E 具名返回:NRVO,可关闭 ===
+ctor     id=7 this=0x7ffe05bbd530 size=3 buf=0x6541f7200360
+ === 离开作用域：析构顺序应为 f e d k c b a ===
+dtor     id=7 this=0x7ffe05bbd530 size=3 buf=0x6541f7200360
+dtor     id=6 this=0x7ffe05bbd510 size=3 buf=0x6541f7200340
+dtor     id=5 this=0x7ffe05bbd4f0 size=3 buf=0x6541f7200320
+dtor     id=4 this=0x7ffe05bbd4d0 size=3 buf=0x6541f7200300
+dtor     id=3 this=0x7ffe05bbd4b0 size=3 buf=0x6541f72002c0
+dtor     id=2 this=0x7ffe05bbd490 size=3 buf=0x6541f72002e0
+dtor     id=1 this=0x7ffe05bbd470 size=0 buf=0
