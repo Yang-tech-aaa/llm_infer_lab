@@ -15,3 +15,24 @@
 
 ## 附：内存分配开销
 - 堆缓冲区地址每次 +0x20（32B），3 个 int 只占 12B → 多出的是 malloc 簿记 + 对齐开销。
+
+### 1. `std::move()` 的签名
+```cpp
+template<class T>
+constexpr std::remove_reference_t<T>&& std::move(T&& t) { return static_cast<T&&>(t); }
+```
+
+### 2. `std::move` 只是编译期的静态类型转换
+- 它本身**并不做资源的移动工作**，只是把对象转换为一个**将亡值（xvalue）**；真正实现资源移动的是对象的**移动构造 / 移动赋值**函数。
+- 注意 **`const T&&` 不会触发移动构造，会退化成拷贝**。
+- 对内置类型使用 `std::move` 并不会有性能提升，只是语义上的一个体现。
+- 函数 `return` 局部对象时：
+  - **未命名（prvalue）**：C++17 强制触发 RVO（无法关掉），自动解析为右值，无需手动添加 `std::move`。
+  - **已命名局部对象**：触发 NRVO，结果与 RVO 一致，但这是编译器层面的优化（可通过 `g++ -fno-elide-constructors` 关闭该优化），同样无需手动添加 `std::move`。
+- `throw` 和 `return` 一样，会把局部变量当作「隐式可移动实体」，优先调用移动构造函数；**手动调用 `std::move` 反而会禁用复制消除**。
+
+### 3. `vector` 的 `push_back` / `emplace_back` 与 `noexcept`
+- `vector` 容器的 `push_back` 有两种重载，分别对应**拷贝**和**移动**；`emplace_back` 则是能直接在容器内构造对象。
+- `vector` 容器在扩容时**检查对象的移动构造是否有 `noexcept` 标签**：有就会使用移动构造，否则使用拷贝构造。
+- 原因是扩容时有 `is_nothrow_move_constructible` 的判断，以保证扩容时的**强异常安全**。
+- 总结：`vector` 扩容要在"搬完之前不出异常"的前提下才能保证强异常安全，所以它用 move_if_noexcept——移动构造标了 noexcept 才敢搬，否则宁可拷贝
