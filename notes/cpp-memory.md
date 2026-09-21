@@ -40,3 +40,8 @@ constexpr std::remove_reference_t<T>&& std::move(T&& t) { return static_cast<T&&
 > 计数口径：`move_ctor` 是全局计数，含"临时对象搬进容器"与"扩容搬移"两部分。
 > 带 noexcept：ctor=8, move_ctor=15(8+7), copy_ctor=0；不带 noexcept：ctor=8, move_ctor=8, copy_ctor=7。
 > 结论：noexcept 只影响**扩容搬移**的选择（7 次移动 vs 7 次拷贝），不影响显式右值实参的移动。
+
+### More Advanced
+- T x=T(); 这行代码只产生一个对象（不是被优化了，而是自c++17后临时对象根本不存在）。
+- return std::move(t) 破坏 NRVO 前提（操作数不是名字）→ 至少多一次移动；且-fno-elide-constructors 是证明不了它更慢的；
+- 标量类型上 push_back(const T&) 与 push_back(T&&) 汇编等价——std::move 只改重载决议，不改工作量。
