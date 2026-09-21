@@ -36,3 +36,7 @@ constexpr std::remove_reference_t<T>&& std::move(T&& t) { return static_cast<T&&
 - `vector` 容器在扩容时**检查对象的移动构造是否有 `noexcept` 标签**：有就会使用移动构造，否则使用拷贝构造。
 - 原因是扩容时有 `is_nothrow_move_constructible` 的判断，以保证扩容时的**强异常安全**。
 - 总结：`vector` 扩容要在"搬完之前不出异常"的前提下才能保证强异常安全，所以它用 move_if_noexcept——移动构造标了 noexcept 才敢搬，否则宁可拷贝
+
+> 计数口径：`move_ctor` 是全局计数，含"临时对象搬进容器"与"扩容搬移"两部分。
+> 带 noexcept：ctor=8, move_ctor=15(8+7), copy_ctor=0；不带 noexcept：ctor=8, move_ctor=8, copy_ctor=7。
+> 结论：noexcept 只影响**扩容搬移**的选择（7 次移动 vs 7 次拷贝），不影响显式右值实参的移动。
