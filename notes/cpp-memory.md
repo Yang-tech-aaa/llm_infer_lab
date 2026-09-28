@@ -46,7 +46,7 @@ constexpr std::remove_reference_t<T>&& std::move(T&& t) { return static_cast<T&&
 - return std::move(t) 破坏 NRVO 前提（操作数不是名字）→ 至少多一次移动；且-fno-elide-constructors 是证明不了它更慢的；
 - 标量类型上 push_back(const T&) 与 push_back(T&&) 汇编等价——std::move 只改重载决议，不改工作量。
 
-## D4 · RAII 进阶：循环引用、deleter 代价、拷 vs 移微基准
+## RAII 进阶：循环引用、deleter 代价、拷 vs 移微基准
 
 ### 实验 1：`shared_ptr` 循环引用 → 泄漏（valgrind 实测）
 
@@ -108,3 +108,9 @@ round 2: copy= 6.97 ms  move=4.30 ms
 1. **环**：`shared_ptr` 互指 → 强计数永不归零 → 既不可达又不释放；valgrind 报「1 块 `definitely` + 1 块 `indirectly`」；至少一条边改 `weak_ptr`。
 2. **deleter**：`unique_ptr` 零开销的前提是 deleter **无状态**；`unique_ptr<T, void(*)(T*)>` 多占一个指针，因为函数指针本身有状态。
 3. **移动**：收益 = 省下的那次**分配 + 深拷贝**；小对象测不出、大载荷才显形 → **报数字必须带载荷和口径**。
+
+## gdb&asan调试double_free问题
+- `g++`**编译**时加相应选项
+- 学会使用相关工具，详见**gdb_Asan_cheetsheet.md**
+
+> 实现类时遵守三五零法则，详见**C++Rule.md**
