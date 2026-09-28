@@ -45,3 +45,66 @@ constexpr std::remove_reference_t<T>&& std::move(T&& t) { return static_cast<T&&
 - T x=T(); 这行代码只产生一个对象（不是被优化了，而是自c++17后临时对象根本不存在）。
 - return std::move(t) 破坏 NRVO 前提（操作数不是名字）→ 至少多一次移动；且-fno-elide-constructors 是证明不了它更慢的；
 - 标量类型上 push_back(const T&) 与 push_back(T&&) 汇编等价——std::move 只改重载决议，不改工作量。
+
+## D4 · RAII 进阶：循环引用、deleter 代价、拷 vs 移微基准
+
+### 实验 1：`shared_ptr` 循环引用 → 泄漏（valgrind 实测）
+
+两个 Node 用 `shared_ptr` 互指（`a->peer=b; b->peer=a`），出作用域后**一条 `dtor` 都没有**。
+
+```text
+definitely lost: 64 bytes in 1 blocks     ← Node A 整块（对象 + 控制块）
+indirectly lost: 64 bytes in 1 blocks     ← Node B 整块（只被 A 内部的指针指着）
+possibly lost: 0 / still reachable: 0
+```
+
+**为什么是 2 块 × 64B**：`make_shared` 把**对象和控制块放在一次分配**里。
+- `64 = Node 48 + 控制块 16`
+- `Node 48 = std::string 32 + shared_ptr 16`
+- 控制块 16 = 强计数 8 + 弱计数 8
+
+**为什么一个 `definitely` 一个 `indirectly`**：valgrind 从「根」（栈/寄存器/全局）做**可达性分析**。局部 `a`、`b` 销毁后强计数各从 2 降到 1（互相持有）→ 没有任何根能到达 → **不可达却又永不释放**；先被判 lost 的那块里的指针把另一块「带」成间接丢失。谁是什么取决于遍历顺序，不用纠结。
+> **读泄漏只看总数：`definitely + indirectly + possibly`。**
+
+**修法**：至少一条边改 `weak_ptr`（本次改 `b->peer`）；用时必须 `lock()` 提升并判空。
+valgrind 应输出 `All heap blocks were freed`
+
+**定位方法**：`valgrind --leak-check=full --show-leak-kinds=all --num-callers=20`，看 `definitely lost` 块下面的 **`alloc'd at`** 调用栈 → `make_shared` ← `make_cycle` ← `main`。
+
+### 实验 2：deleter 与 `sizeof`（g++ 14.2 / x86-64 实测）
+
+| 类型 | `sizeof` | 原因 |
+|---|---|---|
+| `unique_ptr<int>` | 8 | `default_delete` 是空类 |
+| `unique_ptr<int, 空类deleter>` | 8 | 空基类优化 / `[[no_unique_address]]` 吃掉 0 字节 |
+| `unique_ptr<int, 无捕获 lambda>` | 8 | 同上 |
+| `unique_ptr<int, void(*)(int*)>` | **16** | 函数指针要存 → +8 |
+| `unique_ptr<int, 带 4 个 int 的 deleter>` | 24 | 8 + 16 |
+| `shared_ptr<int>` / `weak_ptr<int>` | 16 / 16 | 对象指针 + 控制块指针 |
+
+**结论**：deleter 写成**无状态函数对象**就是零开销；写成**裸函数指针**每个指针白多 8 字节（100 万个 = 8MB 纯浪费）→ 生产代码用函数对象或无捕获 lambda。
+
+### 实验 3：拷 vs 移微基准（`vector<MyString>`，N = 200000，`-O2`）
+
+**口径**：`steady_clock` 计时；`reserve(N)` 排除扩容；`sink=9800000`（= 2e5 × 49）证明循环没被优化掉；每轮重建源数据（移动会掏空源）；3 轮、**丢弃第 1 轮**。
+
+```text
+round 0: copy=13.00 ms  move=4.10 ms   ← 含首次缺页/分配器扩张，作预热丢弃
+round 1: copy= 7.95 ms  move=4.31 ms
+round 2: copy= 6.97 ms  move=4.30 ms
+```
+
+**结果**：copy ≈ 7.46ms（7.95 / 6.97），move ≈ 4.31ms → **≈ 1.73×**；抖动主要来自 copy 轮（分配器抖动）。
+
+**为什么只有 1.73×、不是 10×**：
+- 每元素成本：copy ≈ 37ns（`malloc` ~25ns + `memcpy` 49B）；move ≈ 21ns（写 16B + 源置空 + `push_back` 分支）；
+- 21ns 对「几次指针赋值」太贵 → 说明这段区间里**固定开销主导**（循环、`push_back`、内存写入、虚拟机开销），真实差异被淹没；
+- 规律：**差异 ∝ 被搬运的载荷大小**。49B 太小，载荷越大倍数越高。
+
+
+
+### 总结
+
+1. **环**：`shared_ptr` 互指 → 强计数永不归零 → 既不可达又不释放；valgrind 报「1 块 `definitely` + 1 块 `indirectly`」；至少一条边改 `weak_ptr`。
+2. **deleter**：`unique_ptr` 零开销的前提是 deleter **无状态**；`unique_ptr<T, void(*)(T*)>` 多占一个指针，因为函数指针本身有状态。
+3. **移动**：收益 = 省下的那次**分配 + 深拷贝**；小对象测不出、大载荷才显形 → **报数字必须带载荷和口径**。

@@ -1,0 +1,4 @@
+sizeof(unique_ptr):8bytes
+sizeof(unique_ptr(deleter)):16bytes
+sizeof(shared_ptr):16bytes
+successfully delete in my_del
